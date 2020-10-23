@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -15,22 +16,29 @@ type simplePoint struct {
 	lat, lon float64
 }
 type simpleConn struct {
+	mu      sync.Mutex //
 	conn    redis.Conn // connection to server
 	plmax   int        //
 	plcount int        // number of commands in pipeline
 }
 
 func (conn *simpleConn) send(command string, args ...interface{}) {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
 	if err := conn.conn.Send(command, args...); err != nil {
 		panic(err)
 	}
 	conn.plcount++
 	if conn.plcount == conn.plmax {
+		conn.mu.Unlock()
+		defer conn.mu.Lock()
 		conn.flush()
 	}
 }
 
 func (conn *simpleConn) flush() {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
 	if conn.plcount > 0 {
 		if err := conn.conn.Flush(); err != nil {
 			panic(err)
@@ -45,11 +53,11 @@ func (conn *simpleConn) flush() {
 }
 
 func main() {
-	addr := ":9851"
+	addr := "localhost:9851"
 	numFences := 23_000 // num geofences, SETCHAN
 	radius := 5_000     // radius in meters
 	pipeline := 1       // packet pipelining
-	clients := 3        // number of clients
+	clients := 20       // number of clients
 	flag.StringVar(&addr, "a", addr, "server address")
 	flag.IntVar(&numFences, "n", numFences, "number of geofences")
 	flag.IntVar(&radius, "r", radius, "radius in meters")
@@ -127,4 +135,5 @@ func main() {
 			flushAllConns()
 		}
 	})
+
 }
